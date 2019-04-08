@@ -26,3 +26,6 @@ npm-debug.log
 
 cypress/screenshots
 cypress/videos
+
+test_db
+/data/

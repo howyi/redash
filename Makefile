@@ -55,3 +55,8 @@ redis-cli:
 
 bash:
 	docker-compose run --rm server bash
+
+sharded-setup:
+	cd test_db; mysql -u root -h 127.0.0.1 -P 3381 < employees.sql
+	cd test_db; mysql -u root -h 127.0.0.1 -P 3382 < employees.sql
+	cd test_db; mysql -u root -h 127.0.0.1 -P 3383 < employees.sql

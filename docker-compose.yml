@@ -14,9 +14,11 @@ services:
       - ".:/app"
     environment:
       PYTHONUNBUFFERED: 0
-      REDASH_LOG_LEVEL: "INFO"
+      REDASH_LOG_LEVEL: "DEBUG"
+      REDASH_LOG_STDOUT: "true"
       REDASH_REDIS_URL: "redis://redis:6379/0"
       REDASH_DATABASE_URL: "postgresql://postgres@postgres/postgres"
+      REDASH_ADDITIONAL_QUERY_RUNNERS: "redash.query_runner.sharded_mysql"
   worker:
     build: .
     command: scheduler
@@ -26,11 +28,12 @@ services:
       - server
     environment:
       PYTHONUNBUFFERED: 0
-      REDASH_LOG_LEVEL: "INFO"
+      REDASH_LOG_LEVEL: "DEBUG"
       REDASH_REDIS_URL: "redis://redis:6379/0"
       REDASH_DATABASE_URL: "postgresql://postgres@postgres/postgres"
       QUEUES: "queries,scheduled_queries,celery"
       WORKERS_COUNT: 2
+      REDASH_ADDITIONAL_QUERY_RUNNERS: "redash.query_runner.sharded_mysql"
   redis:
     image: redis:3-alpine
     restart: unless-stopped
@@ -38,8 +41,28 @@ services:
     image: postgres:9.5-alpine
     # The following turns the DB into less durable, but gains significant performance improvements for the tests run (x3
     # improvement on my personal machine). We should consider moving this into a dedicated Docker Compose configuration for
-    # tests.
+    # tests.docker-compose up
+    volumes:
+      - "./data/postgres:/var/lib/postgresql/data"
     ports:
       - "15432:5432"
     command: "postgres -c fsync=off -c full_page_writes=off -c synchronous_commit=OFF"
     restart: unless-stopped
+  db1:
+    image: mysql:5.6
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+    ports:
+      - "3381:3306"
+  db2:
+    image: mysql:5.6
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+    ports:
+      - "3382:3306"
+  db3:
+    image: mysql:5.6
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+    ports:
+      - "3383:3306"
