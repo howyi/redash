@@ -18,7 +18,7 @@ services:
       REDASH_LOG_STDOUT: "true"
       REDASH_REDIS_URL: "redis://redis:6379/0"
       REDASH_DATABASE_URL: "postgresql://postgres@postgres/postgres"
-      REDASH_ADDITIONAL_QUERY_RUNNERS: "redash.query_runner.sharded_mysql"
+      REDASH_ADDITIONAL_QUERY_RUNNERS: "redash.query_runner.sharding_mysql"
   worker:
     build: .
     command: scheduler
@@ -33,7 +33,7 @@ services:
       REDASH_DATABASE_URL: "postgresql://postgres@postgres/postgres"
       QUEUES: "queries,scheduled_queries,celery"
       WORKERS_COUNT: 2
-      REDASH_ADDITIONAL_QUERY_RUNNERS: "redash.query_runner.sharded_mysql"
+      REDASH_ADDITIONAL_QUERY_RUNNERS: "redash.query_runner.sharding_mysql"
   redis:
     image: redis:3-alpine
     restart: unless-stopped

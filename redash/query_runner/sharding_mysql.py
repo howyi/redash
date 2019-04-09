@@ -27,14 +27,14 @@ types_map = {
 }
 
 
-class ShardedMysql(Mysql):
+class ShardingMysql(Mysql):
     @classmethod
     def name(cls):
-        return "MySQL (Sharded)"
+        return "MySQL (Sharding)"
 
     @classmethod
     def type(cls):
-        return 'sharded_mysql'
+        return 'sharding_mysql'
 
     @classmethod
     def enabled(cls):
@@ -117,6 +117,7 @@ class ShardedMysql(Mysql):
         all_rows = []
 
         for param in params:
+            param = param.strip()
             connection = None
             try:
                 config = {
@@ -147,41 +148,41 @@ class ShardedMysql(Mysql):
                 logger.debug("MySQL running query: %s", query)
                 cursor.execute(query)
 
-                sharded_data = cursor.fetchall()
+                sharding_data = cursor.fetchall()
 
                 while cursor.nextset():
-                    sharded_data = cursor.fetchall()
+                    sharding_data = cursor.fetchall()
 
                 if cursor.description is not None:
                     columns = self.fetch_columns([(i[0], types_map.get(i[1], None)) for i in cursor.description])
-                    rows = [dict(zip((c['name'] for c in columns), row)) for row in sharded_data]
+                    rows = [dict(zip((c['name'] for c in columns), row)) for row in sharding_data]
 
-                    sharded_data = {'columns': columns, 'rows': rows}
-                    sharded_json_data = json_dumps(sharded_data)
+                    sharding_data = {'columns': columns, 'rows': rows}
+                    sharding_json_data = json_dumps(sharding_data)
                     error = None
                 else:
-                    sharded_json_data = None
+                    sharding_json_data = None
                     error = "No data was returned."
 
                 cursor.close()
             except MySQLdb.Error as e:
-                sharded_json_data = None
+                sharding_json_data = None
                 error = e.args[1]
             except KeyboardInterrupt:
                 cursor.close()
                 error = "Query cancelled by user."
-                sharded_json_data = None
+                sharding_json_data = None
             finally:
                 if connection:
                     connection.close()
 
-            sharded_data = json_loads(sharded_json_data)
+            sharding_data = json_loads(sharding_json_data)
 
-            all_columns = sharded_data['columns']
+            all_columns = sharding_data['columns']
             if self.configuration.get('show_params'):
                 all_columns.insert(0, {"type": "string", "friendly_name": "database", "name": "database"})
 
-            for row in sharded_data['rows']:
+            for row in sharding_data['rows']:
                 if self.configuration.get('show_params'):
                     row['database'] = param
                 all_rows.append(row)
@@ -192,4 +193,4 @@ class ShardedMysql(Mysql):
         return json_data, error
 
 
-register(ShardedMysql)
+register(ShardingMysql)
