@@ -1,5 +1,8 @@
+# -*- coding: utf-8 -*-
+
 import logging
 import os
+import numpy as np
 
 from redash.query_runner import *
 from redash.utils import json_dumps, json_loads
@@ -58,7 +61,7 @@ class ShardingMysql(Mysql):
                 },
                 'show_params': {
                     'type': 'boolean',
-                    'title': 'Show parameter in results.'
+                    'title': 'データベース名を1番目の列に表示する'
                 },
                 'host': {
                     'type': 'string',
@@ -115,6 +118,7 @@ class ShardingMysql(Mysql):
 
         all_columns = []
         all_rows = []
+        error = None
 
         for param in params:
             param = param.strip()
@@ -133,8 +137,6 @@ class ShardingMysql(Mysql):
                         config[key] = int(config[key].replace('{param}', param))
                     else:
                         config[key] = config[key].replace('{param}', param)
-
-                logger.info(config)
 
                 connection = MySQLdb.connect(host=config['host'],
                                              user=config['user'],
@@ -158,34 +160,34 @@ class ShardingMysql(Mysql):
                     rows = [dict(zip((c['name'] for c in columns), row)) for row in sharding_data]
 
                     sharding_data = {'columns': columns, 'rows': rows}
-                    sharding_json_data = json_dumps(sharding_data)
-                    error = None
-                else:
-                    sharding_json_data = None
-                    error = "No data was returned."
+
+                    all_columns = sharding_data['columns']
+                    if self.configuration.get('show_params'):
+                        all_columns.insert(0, {"type": "string", "friendly_name": "database", "name": "database"})
+
+                    for row in sharding_data['rows']:
+                        if self.configuration.get('show_params'):
+                            row['database'] = param
+                        all_rows.append(row)
 
                 cursor.close()
             except MySQLdb.Error as e:
-                sharding_json_data = None
-                error = e.args[1]
+                if error is None:
+                    error = ""
+                error += param + ": " + e.args[1] + " "
             except KeyboardInterrupt:
                 cursor.close()
-                error = "Query cancelled by user."
-                sharding_json_data = None
+                if error is None:
+                    error = ""
+                error += param + ": " + "Query cancelled by user. "
             finally:
                 if connection:
                     connection.close()
 
-            sharding_data = json_loads(sharding_json_data)
-
-            all_columns = sharding_data['columns']
-            if self.configuration.get('show_params'):
-                all_columns.insert(0, {"type": "string", "friendly_name": "database", "name": "database"})
-
-            for row in sharding_data['rows']:
-                if self.configuration.get('show_params'):
-                    row['database'] = param
-                all_rows.append(row)
+        if len(all_rows) is 0:
+            if error is None:
+                error = ""
+            error += "No data was returned."
 
         data = {'columns': all_columns, 'rows': all_rows}
         json_data = json_dumps(data)
@@ -193,4 +195,158 @@ class ShardingMysql(Mysql):
         return json_data, error
 
 
+class ShardingMysqlAggregate(ShardingMysql):
+    @classmethod
+    def name(cls):
+        return "MySQL (Sharding, Aggregate)"
+
+    @classmethod
+    def type(cls):
+        return 'sharding_mysql_aggregate'
+
+    @classmethod
+    def enabled(cls):
+        return True
+
+    @classmethod
+    def annotate_query(cls):
+        return True
+
+    @classmethod
+    def configuration_schema(cls):
+        show_ssl_settings = parse_boolean(os.environ.get('MYSQL_SHOW_SSL_SETTINGS', 'true'))
+
+        schema = {
+            'type': 'object',
+            'properties': {
+                'params': {
+                    'type': 'string',
+                    'default': 'shard1, shard2, shard3',
+                    'title': 'Shard Parameter (Replace on {param})'
+                },
+                'aggregate_columns': {
+                    'type': 'number',
+                    'default': 1,
+                    'title': '集計のキーとする列（左からN列分）'
+                },
+                'host': {
+                    'type': 'string',
+                    'default': '127.0.0.1'
+                },
+                'user': {
+                    'type': 'string'
+                },
+                'passwd': {
+                    'type': 'string',
+                    'title': 'Password'
+                },
+                'db': {
+                    'type': 'string',
+                    'title': 'Database name',
+                    'default': 'test_{param}'
+                },
+                'port': {
+                    'type': 'string',
+                    'default': '3306',
+                }
+            },
+            "order": ['params', 'aggregate_columns', 'host', 'port', 'user', 'passwd', 'db'],
+            'required': ['db'],
+            'secret': ['passwd']
+        }
+
+        if show_ssl_settings:
+            schema['properties'].update({
+                'use_ssl': {
+                    'type': 'boolean',
+                    'title': 'Use SSL'
+                },
+                'ssl_cacert': {
+                    'type': 'string',
+                    'title': 'Path to CA certificate file to verify peer against (SSL)'
+                },
+                'ssl_cert': {
+                    'type': 'string',
+                    'title': 'Path to client certificate file (SSL)'
+                },
+                'ssl_key': {
+                    'type': 'string',
+                    'title': 'Path to private key file (SSL)'
+                }
+            })
+
+        return schema
+
+    def run_query(self, query, user):
+        json_data, error = super(ShardingMysqlAggregate, self).run_query(query, user)
+        data = json_loads(json_data)
+        if error is None:
+            aggregate_columns = self.configuration.get('aggregate_columns', 1)
+
+            ordered_columns = []
+            for ordered_column in data['columns']:
+                ordered_columns.append(ordered_column['name'])
+
+            aggregated_dict = {}
+            for row in data['rows']:
+                ordered = []
+                for ordered_column in ordered_columns:
+                    ordered.append(row[ordered_column])
+                keys = []
+                values = []
+                i = 0
+                for value in ordered:
+                    i += 1
+                    if i <= aggregate_columns:
+                        keys.append(value)
+                    else:
+                        if type(value) is str:
+                            raise Exception('String found in aggregate column.')
+                        values.append(value)
+
+                if len(keys) < aggregate_columns:
+                    raise Exception('Aggregate query is incorrect.')
+
+                self.aggregate(aggregated_dict, keys, values)
+
+            flattened_dicts = []
+            self.flatten(aggregated_dict, ordered_columns, {}, flattened_dicts)
+            logger.info(flattened_dicts)
+            data['rows'] = flattened_dicts
+        return json_dumps(data), error
+
+    def aggregate(self, target_dict, keys, values):
+        key = keys.pop(0)
+        if len(keys) is not 0:
+            if key not in target_dict:
+                target_dict[key] = {}
+
+            self.aggregate(target_dict[key], keys, values)
+        else:
+            if key in target_dict:
+                a = target_dict[key]
+                b = np.array(values)
+                target_dict[key] = a + b
+            else:
+                target_dict[key] = np.array(values)
+
+    def flatten(self, target_dict, ordered_columns, parent_values, result):
+        if type(target_dict) is np.ndarray:
+            values = {}
+            for k, v in parent_values.items():
+                values[k] = v
+
+            i = 0
+            for column in ordered_columns:
+                values[column] = target_dict[i]
+                i += 1
+
+            result.append(values)
+        else:
+            for key, value in target_dict.items():
+                parent_values[ordered_columns[0]] = key
+                self.flatten(value, ordered_columns[1:], parent_values, result)
+
+
+register(ShardingMysqlAggregate)
 register(ShardingMysql)
